@@ -86,6 +86,7 @@
     .cover-sub { font-family: var(--serif); font-size: clamp(1.3rem, 1.9vw, 1.7rem); font-weight: 300; font-style: italic; line-height: 1.4; color: var(--text-dim); max-width: 500px; }
     .cover-desc { color: var(--text-dim); font-size: 13px; line-height: 1.8; max-width: 460px; }
     .cover-art { position: relative; aspect-ratio: 1; background: #000; border: 1px solid var(--line); overflow: hidden; max-width: 520px; margin-left: auto; width: 100%; }
+    
     .canvas-slot { position: absolute; inset: 0; overflow: hidden; }
     .canvas-slot canvas {
       display: block !important;
@@ -94,6 +95,7 @@
       width: 100% !important; height: 100% !important;
       max-width: 100% !important; max-height: 100% !important;
     }
+    
     .cover-foot { display: grid; grid-template-columns: repeat(3, 1fr); gap: 40px; padding-top: 32px; border-top: 1px solid var(--line); font-family: var(--mono); font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--text-faint); }
     .cover-foot .k { display: block; color: var(--gold-soft); margin-bottom: 8px; }
     .cover-foot .v { color: var(--text-dim); letter-spacing: 0.1em; line-height: 1.7; }
@@ -707,21 +709,6 @@
 <script>
 // ============================================================
 // DECONSTRUCTED STAGE — GENERATIVE SUPREMATIST COMPOSITIONS
-//
-// Same seed → many surfaces:
-//   • Cover, Plate, Frame — same seed
-//   • All 4 surfaces (Print, Scarf, Textile, Wall) — same seed
-//   • Archive — 8 unique seeds
-//
-// Rectangular surfaces tile the square composition to fill.
-//
-// Generative engine (preserved from source):
-//   • 2–3 × 2–3 grid of sheared planes
-//   • 4-colour Suprematist palette (red, blue, yellow, black)
-//   • Per-plane shear (direction + magnitude)
-//   • ~15% empty cells for breathing room
-//   • Heavy black frame at 4% inset
-//   • Paper-toned ground
 // ============================================================
 
 const prefix = 'Deconstructed-Stage';
@@ -747,13 +734,9 @@ const PALETTE = [
 
 // ============================================================
 // SKETCH FACTORY
-// tile: { cols, rows } — repeat the square composition N times
 // ============================================================
-function makeSketch({ slotId, seedValue, isMaster, maxFrames, tile }) {
+function makeSketch({ slotId, seedValue, isMaster, maxFrames }) {
   const stopAfter = maxFrames || Infinity;
-  const tileCols = (tile && tile.cols) || 1;
-  const tileRows = (tile && tile.rows) || 1;
-
   let canvasW = 0;
   let canvasH = 0;
   let frameCount = 0;
@@ -795,7 +778,6 @@ function makeSketch({ slotId, seedValue, isMaster, maxFrames, tile }) {
             sr.range(0.18, 0.3);
             planeCount++;
           } else {
-            // consume no colour/shift rolls for skipped cells
             continue;
           }
         }
@@ -813,32 +795,19 @@ function makeSketch({ slotId, seedValue, isMaster, maxFrames, tile }) {
         return;
       }
 
-      // Tile composition
-      const tileW = canvasW / tileCols;
-      const tileH = canvasH / tileRows;
-      const tileSize = Math.min(tileW, tileH);
-
-      for (let ty = 0; ty < tileRows; ty++) {
-        for (let tx = 0; tx < tileCols; tx++) {
-          const ox = tx * tileW + (tileW - tileSize) / 2;
-          const oy = ty * tileH + (tileH - tileSize) / 2;
-
-          p.push();
-          p.translate(ox, oy);
-          drawComposition(p, tileSize, seedValue);
-          p.pop();
-        }
-      }
-
+      // Directly draw the composition to fill the entire canvas exactly
+      drawComposition(p, canvasW, canvasH, seedValue);
       frameCount++;
     };
   };
 
-  // ---- Draw the deconstructed-stage composition into a square of side `size` ----
-  function drawComposition(p, size, seedValue) {
+  // ---- Draw the deconstructed-stage composition to fill the canvas ----
+  function drawComposition(p, w, h, seedValue) {
     const sr = new SeededRandom(seedValue);
-    const cs = size;
-    const margin = cs * 0.08;
+    const maxDim = Math.max(w, h);
+    const minDim = Math.min(w, h);
+    
+    const margin = minDim * 0.08;
     const gridCount = sr.int(2, 3);
 
     // Paper ground
@@ -846,23 +815,35 @@ function makeSketch({ slotId, seedValue, isMaster, maxFrames, tile }) {
 
     // Frame
     p.stroke(0, 0, 20);
-    p.strokeWeight(cs * 0.006);
+    p.strokeWeight(maxDim * 0.006);
     p.noFill();
-    p.rect(margin * 0.5, margin * 0.5, cs - margin, cs - margin);
+    p.rect(margin * 0.5, margin * 0.5, w - margin, h - margin);
 
     // Planes
-    const size2 = (cs - margin * 2) * 0.65;
-    const x0 = cs * 0.18;
-    const y0 = cs * 0.18;
-    const cell = size2 / gridCount;
+    // Calculate the size of the area where planes will be drawn
+    const drawW = w - margin * 2;
+    const drawH = h - margin * 2;
+    
+    // The planes should occupy the central area, roughly 65% of the canvas 
+    // to leave room for the border and margins, similar to the original
+    const planeW = drawW * 0.75;
+    const planeH = drawH * 0.75;
+    
+    const x0 = (w - planeW) / 2;
+    const y0 = (h - planeH) / 2;
+    
+    const cellW = planeW / gridCount;
+    const cellH = planeH / gridCount;
 
     for (let i = 0; i < gridCount; i++) {
       for (let j = 0; j < gridCount; j++) {
         if (sr.rand() < 0.85) {
           const col = sr.pick(PALETTE);
           const dir = sr.pick([-1, 1]);
-          const offset = dir * cell * sr.range(0.18, 0.3);
-          drawPlane(p, x0 + i * cell, y0 + j * cell, cell, offset, col, cs);
+          // Offset is proportional to cell width
+          const offset = dir * cellW * sr.range(0.18, 0.3);
+          
+          drawPlane(p, x0 + i * cellW, y0 + j * cellH, cellW, cellH, offset, col, maxDim);
         }
       }
     }
@@ -871,7 +852,7 @@ function makeSketch({ slotId, seedValue, isMaster, maxFrames, tile }) {
   }
 
   // ---- Draw a single sheared plane ----
-  function drawPlane(p, x, y, s, offset, col, cs) {
+  function drawPlane(p, x, y, w, h, offset, col, maxDim) {
     p.push();
     p.translate(x, y);
 
@@ -880,20 +861,20 @@ function makeSketch({ slotId, seedValue, isMaster, maxFrames, tile }) {
     p.fill(col[0], col[1], col[2]);
     p.quad(
       0, 0,
-      s, 0,
-      s + offset, s,
-      offset, s
+      w, 0,
+      w + offset, h,
+      offset, h
     );
 
     // Outline
     p.stroke(0, 0, 20);
-    p.strokeWeight(cs * 0.003);
+    p.strokeWeight(maxDim * 0.003);
     p.noFill();
     p.quad(
       0, 0,
-      s, 0,
-      s + offset, s,
-      offset, s
+      w, 0,
+      w + offset, h,
+      offset, h
     );
 
     p.pop();
@@ -947,10 +928,10 @@ function attachVisibilityObserver(p5Instance, element) {
   obs.observe(element);
 }
 
-function createLiveP5({ slotId, seedValue, isMaster, maxFrames, tile, onCreated }) {
+function createLiveP5({ slotId, seedValue, isMaster, maxFrames, onCreated }) {
   whenSlotReady(slotId, (slot) => {
     slot.querySelectorAll('canvas').forEach(c => c.remove());
-    const inst = new p5(makeSketch({ slotId, seedValue, isMaster, maxFrames, tile }), slot);
+    const inst = new p5(makeSketch({ slotId, seedValue, isMaster, maxFrames }), slot);
     inst._frozen = false;
     attachVisibilityObserver(inst, slot);
     if (onCreated) onCreated(inst);
@@ -966,7 +947,6 @@ function drawPlate() {
     seedValue: seed,
     isMaster: true,
     maxFrames: 2,
-    tile: { cols: 1, rows: 1 },
     onCreated: (inst) => { plateP5 = inst; }
   });
 }
@@ -980,7 +960,6 @@ function drawCover() {
     seedValue: seed,
     isMaster: false,
     maxFrames: 2,
-    tile: { cols: 1, rows: 1 },
     onCreated: (inst) => { coverP5 = inst; }
   });
 }
@@ -994,19 +973,18 @@ function drawFramedPlate() {
     seedValue: seed,
     isMaster: false,
     maxFrames: 2,
-    tile: { cols: 1, rows: 1 },
     onCreated: (inst) => { frameP5 = inst; }
   });
 }
 
 // ============================================================
-// SURFACES — same seed as plate, tiled to fill aspect ratio
+// SURFACES — same seed as plate, scaled to fill aspect ratio
 // ============================================================
 const surfaceDefs = [
-  { id: 'surfacePrint',   wrapId: 'wrap-surfacePrint',   tile: { cols: 1, rows: 1 } },
-  { id: 'surfaceScarf',   wrapId: 'wrap-surfaceScarf',   tile: { cols: 3, rows: 1 } },
-  { id: 'surfaceTextile', wrapId: 'wrap-surfaceTextile', tile: { cols: 2, rows: 2 } },
-  { id: 'surfaceWall',    wrapId: 'wrap-surfaceWall',    tile: { cols: 1, rows: 2 } }
+  { id: 'surfacePrint',   wrapId: 'wrap-surfacePrint' },
+  { id: 'surfaceScarf',   wrapId: 'wrap-surfaceScarf' },
+  { id: 'surfaceTextile', wrapId: 'wrap-surfaceTextile' },
+  { id: 'surfaceWall',    wrapId: 'wrap-surfaceWall' }
 ];
 
 function drawSurfaces() {
@@ -1035,8 +1013,7 @@ function drawSurfaces() {
           slotId: slot.id || (slot.id = def.id + '-slot'),
           seedValue: seed,
           isMaster: false,
-          maxFrames: 2,
-          tile: def.tile
+          maxFrames: 2
         }),
         slot
       );
@@ -1111,8 +1088,7 @@ function drawArchive() {
           slotId: 'archive-slot-' + i,
           seedValue: archiveSeeds[i],
           isMaster: false,
-          maxFrames: 2,
-          tile: { cols: 1, rows: 1 }
+          maxFrames: 2
         }),
         slot
       );
